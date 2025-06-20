@@ -1,0 +1,13 @@
+telethon
+apscheduler
+asyncpg
+sentence-transformers
+beautifulsoup4
+feedparser
+numpy
+scikit-learn
+torch
+python-dotenv
+pyyaml
+httpx
+pgvector

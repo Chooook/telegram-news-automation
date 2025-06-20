@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: telegram_bot_db
+      POSTGRES_USER: bot_user
+      POSTGRES_PASSWORD: your_password_here
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+  bot:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      - db
+    restart: always
+volumes:
+  db_data: 

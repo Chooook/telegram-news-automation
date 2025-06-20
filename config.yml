@@ -1,0 +1,95 @@
+telegram_channel: '@test_chanellmy'
+admin_user_ids:
+  - 791291895
+  - 454036002
+  - 453698873
+
+postgres:
+  dbname: "telegram_bot_db"
+  user: "bot_user"
+  password: "your_password_here"
+  host: "localhost"
+  port: 5432
+
+intervals:
+  habr: 3600
+  telegram: 300
+  rss: 3600
+
+parsing_interval: 36
+
+sources:
+  - name: Habr
+    type: rss
+    url: "https://habr.com/en/rss/hubs/{tag}/articles/"
+    tags:
+      - "python"
+      - "machine_learning"
+      - "artificial_intelligence"
+      - "bigdata"
+      - "data_engineering"
+
+
+
+  - name: "QuData"
+    type: "html"
+    url: "https://qudata.com/ru/news-ai/tags/neural-network/"
+    selectors:
+      article: "article.post-box"
+      title: "h3.entry-title a"
+      link: "h3.entry-title a"
+      date: "span.posted-on"
+      description: "div.entry-summary p"
+      image: "div.entry-media img"
+    default_tags:
+      - "neural-network"
+      - "AI"
+      - "машинное обучение"
+
+
+      
+  - name: Test2_Glebus
+    type: telegram_web
+    username: "@test2_glebus"
+  - name: ICT_Moscow_AI
+    type: telegram_web
+    username: "@ict_moscow_ai"
+  - name: "AI Machine Learning Big Data"
+    type: "telegram_web"
+    username: "@ai_machinelearning_big_data"
+  - name: "Data Secrets"
+    type: "telegram_web"
+    username: "@data_secrets"
+  - name: "Renat Alimbekov"
+    type: "telegram_web"
+    username: "@renat_alimbekov"
+  - name: "DSPROGLIB"
+    type: "telegram_web"
+    username: "@dsproglib"
+  - name: "Small Data Science"
+    type: "telegram_web"
+    username: "@smalldatascience"
+  - name: "DEVS Pro"
+    type: "telegram_web"
+    username: "@devsp"
+  - name: "NoML Digest"
+    type: "telegram_web"
+    username: "@noml_digest"
+  - name: "AddMeTo"
+    type: "telegram_web"
+    username: "@addmeto"
+  - name: "CryptoValerii"
+    type: "telegram_web"
+    username: "@cryptovalerii"
+  - name: "Gonzo ML"
+    type: "telegram_web"
+    username: "@gonzo_ML"
+  - name: "DL & NLP"
+    type: "telegram_web"
+    username: "@dlinnlp"
+  - name: "SV9T Channel"
+    type: "telegram_web"
+    username: "@sv9t_channel"
+  - name: "Open Data Science"
+    type: "telegram_web"
+    username: "@opendatascience"
