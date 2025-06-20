@@ -1,8 +1,10 @@
 import asyncio
+import os
 from telethon import TelegramClient
-from utils.config import API_ID, API_HASH, BOT_TOKEN
+from utils.config import API_ID, API_HASH, BOT_TOKEN, CONFIG_PATH
 from database.db_manager import ensure_vector_extension_exists, init_db_pool, init_db
 from bot.handlers import register_handlers
+from bot.channel_handlers import ChannelHandlers
 from scheduler.scheduler import setup_scheduler
 from utils.logging_config import setup_logging
 
@@ -25,7 +27,16 @@ async def main():
 
     # 3. Setup bot handlers and scheduler
     print("Setting up bot handlers and scheduler...")
+    
+    # Register main handlers
     await register_handlers(client, pool)
+    
+    # Register channel management handlers
+    channel_handlers = ChannelHandlers(CONFIG_PATH)
+    for handler in channel_handlers.get_handlers():
+        client.add_event_handler(handler)
+    
+    # Setup scheduler
     scheduler = setup_scheduler(client, pool)
 
     # 4. Start the client and scheduler

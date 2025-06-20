@@ -12,15 +12,10 @@ fi
 cd telegram-news-automation
 
 # 2. Проверка .env
+# 2. Проверка .env
 if [ ! -f .env ]; then
-  if [ -f .env.example ]; then
-    cp .env.example .env
-    echo "⚠️  Заполните .env своими данными!"
-    exit 1
-  else
-    echo "⚠️  Нет .env и .env.example! Создайте .env вручную."
-    exit 1
-  fi
+  echo "⚠️  Нет .env! Создайте .env вручную."
+  exit 1
 fi
 
 # 3. Проверка дампа базы

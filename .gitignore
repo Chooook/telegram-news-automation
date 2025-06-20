@@ -6,6 +6,7 @@ __pycache__/
 
 # Env
 .env
+mydb_dump.sql
 
 # Logs
 *.log

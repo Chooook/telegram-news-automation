@@ -1,9 +1,14 @@
+# Основные настройки бота
 telegram_channel: '@test_chanellmy'
+bot_token: 'YOUR_BOT_TOKEN'  # Токен бота от @BotFather
+
+# ID администраторов бота
 admin_user_ids:
   - 791291895
   - 454036002
   - 453698873
 
+# Настройки базы данных PostgreSQL
 postgres:
   dbname: "telegram_bot_db"
   user: "bot_user"
@@ -11,17 +16,19 @@ postgres:
   host: "localhost"
   port: 5432
 
+# Интервалы парсинга (в секундах)
 intervals:
-  habr: 3600
-  telegram: 300
-  rss: 3600
+  default: 3600  # 1 час
+  telegram: 1800  # 30 минут
+  rss: 3600      # 1 час
+  html: 7200     # 2 часа
 
-parsing_interval: 36
-
+# Источники данных
 sources:
-  - name: Habr
-    type: rss
-    url: "https://habr.com/en/rss/hubs/{tag}/articles/"
+  # RSS-ленты
+  - name: "Хабр"
+    type: "rss"
+    url: "https://habr.com/ru/rss/hubs/{tag}/articles/"
     tags:
       - "python"
       - "machine_learning"
@@ -29,8 +36,7 @@ sources:
       - "bigdata"
       - "data_engineering"
 
-
-
+  # HTML-сайты
   - name: "QuData"
     type: "html"
     url: "https://qudata.com/ru/news-ai/tags/neural-network/"
@@ -45,6 +51,23 @@ sources:
       - "neural-network"
       - "AI"
       - "машинное обучение"
+
+  # Telegram каналы (веб-парсинг)
+  - name: "Open Data Science"
+    type: "telegram_web"
+    username: "opendatascience"  # Без @
+    tags:
+      - "data_science"
+      - "machine_learning"
+      - "AI"
+
+  - name: "Нейронные сети"
+    type: "telegram_web"
+    username: "pytorchs"  # Без @
+    tags:
+      - "neural_networks"
+      - "deep_learning"
+      - "pytorch"
 
 
       

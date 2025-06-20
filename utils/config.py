@@ -1,9 +1,14 @@
 import os
 import yaml
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Paths
+BASE_DIR = Path(__file__).parent.parent
+CONFIG_PATH = BASE_DIR / 'config.yml'
 
 # Secrets from .env
 API_ID = os.getenv('API_ID')
@@ -12,8 +17,8 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 
 # Load configuration from config.yml
-with open('config.yml', 'r') as f:
-    config = yaml.safe_load(f)
+with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f) or {}  # Return empty dict if config is empty
 
 # Telegram settings
 TELEGRAM_CHANNEL = config.get('telegram_channel')
