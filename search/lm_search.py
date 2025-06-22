@@ -3,7 +3,7 @@ from database.db_manager import find_similar_articles
 
 import httpx
 
-async def semantic_search(query: str, pool, top_k=5, start_date=None, end_date=None):
+async def semantic_search(query: str, pool, top_k=5, start_date=None, end_date=None, client=None):
     """
     Performs semantic search for a given query, with optional date filtering.
 
@@ -11,8 +11,9 @@ async def semantic_search(query: str, pool, top_k=5, start_date=None, end_date=N
         query (str): The user's search query.
         pool: The database connection pool.
         top_k (int): The number of top results to return.
-        start_date (str): The start date for filtering articles (inclusive).
-        end_date (str): The end date for filtering articles (inclusive).
+        start_date (datetime, optional): The start date for filtering articles (inclusive).
+        end_date (datetime, optional): The end date for filtering articles (inclusive).
+        client: Optional client parameter for future use.
 
     Returns:
         list: A list of the most relevant articles.
@@ -20,9 +21,10 @@ async def semantic_search(query: str, pool, top_k=5, start_date=None, end_date=N
     if not query:
         return []
 
-    # 1. Generate embedding for the query
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        query_embedding = await generate_embedding(query, client)
+
+    try:
+        # 1. Generate embedding for the query
+        query_embedding = await generate_embedding(query)
         if query_embedding is None:
             return []
 
@@ -36,3 +38,8 @@ async def semantic_search(query: str, pool, top_k=5, start_date=None, end_date=N
         )
 
         return similar_articles
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in semantic_search: {e}", exc_info=True)
+        return []

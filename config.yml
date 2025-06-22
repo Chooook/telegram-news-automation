@@ -1,6 +1,6 @@
 # Основные настройки бота
 telegram_channel: '@test_chanellmy'
-bot_token: 'YOUR_BOT_TOKEN'  # Токен бота от @BotFather
+bot_token: '7504004788:AAHMmpWzubUIFKD-Dlodc-yw9tAhf7wUbik' # Токен бота от @BotFather
 
 # ID администраторов бота
 admin_user_ids:

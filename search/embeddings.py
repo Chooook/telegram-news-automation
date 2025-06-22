@@ -1,30 +1,18 @@
-import os
-import httpx
-import asyncio
+from sentence_transformers import SentenceTransformer
+import numpy as np
 import logging
 from typing import Optional, List, Dict, Any
 from database.db_manager import get_articles_without_embeddings, add_embedding
 
-# Настройка логирования
 logger = logging.getLogger(__name__)
+model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
 
-# Get API Key from environment variables
-API_KEY = os.getenv("HF_API_TOKEN")
-API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
-HEADERS = {"Authorization": f"Bearer {API_KEY}"}
-
-# Таймауты в секундах
-REQUEST_TIMEOUT = 30.0
-MODEL_LOAD_TIMEOUT = 60.0
-MAX_RETRIES = 3
-
-async def generate_embedding(text: str, client: httpx.AsyncClient) -> Optional[List[float]]:
+async def generate_embedding(text: str) -> Optional[List[float]]:
     """
-    Генерирует векторное представление текста с использованием Hugging Face API.
+    Генерирует векторное представление текста с использованием локальной модели.
     
     Args:
         text: Текст для векторизации
-        client: HTTP-клиент для запросов
         
     Returns:
         Список чисел с плавающей точкой (эмбеддинг) или None в случае ошибки
@@ -32,152 +20,112 @@ async def generate_embedding(text: str, client: httpx.AsyncClient) -> Optional[L
     if not text or not isinstance(text, str):
         logger.warning("Пустой или неверный формат текста для генерации эмбеддинга")
         return None
+    try:
+        embedding = model.encode(text, convert_to_numpy=True).tolist()
+        logger.debug(f"Успешно сгенерирован эмбеддинг для текста: {text[:100]}...")
+        return embedding
+    except Exception as e:
+        logger.error(f"Ошибка генерации эмбеддинга: {e}")
+        return None
 
-    payload = {
-        "inputs": text,
-        "options": {"wait_for_model": True}
-    }
-    
-    last_error = None
-    
-    for attempt in range(MAX_RETRIES):
-        try:
-            logger.debug(f"Попытка {attempt + 1} генерации эмбеддинга для текста: {text[:100]}...")
-            
-            # Отправляем запрос с таймаутом
-            response = await client.post(
-                API_URL,
-                headers=HEADERS,
-                json=payload,
-                timeout=REQUEST_TIMEOUT
-            )
-            
-            # Если модель загружается, ждем и повторяем
-            if response.status_code == 503:  # Model is loading
-                wait_time = min(20 * (attempt + 1), 60)  # Увеличиваем время ожидания
-                logger.warning(f"Модель загружается, ждем {wait_time} секунд...")
-                await asyncio.sleep(wait_time)
-                continue
-                
-            # Проверяем статус ответа
-            response.raise_for_status()
-            
-            # Обрабатываем успешный ответ
-            result = response.json()
-            
-            # Проверяем формат ответа
-            if isinstance(result, list):
-                if result and isinstance(result[0], float):
-                    return result
-                if result and isinstance(result[0], list):
-                    return result[0]
-            
-            logger.warning(f"Неожиданный формат ответа API: {result}")
-            return None
-            
-        except httpx.HTTPStatusError as e:
-            last_error = f"Ошибка API (статус {e.response.status_code}): {e.response.text}"
-            logger.error(last_error)
-            if e.response.status_code == 429:  # Too Many Requests
-                retry_after = int(e.response.headers.get('Retry-After', 30))
-                await asyncio.sleep(retry_after)
-            else:
-                break
-                
-        except (httpx.RequestError, asyncio.TimeoutError) as e:
-            last_error = f"Ошибка сети: {str(e)}"
-            logger.error(last_error)
-            await asyncio.sleep(5 * (attempt + 1))  # Экспоненциальная задержка
-            
-        except Exception as e:
-            last_error = f"Неожиданная ошибка: {str(e)}"
-            logger.exception("Ошибка при генерации эмбеддинга")
-            break
-    
-    logger.error(f"Не удалось сгенерировать эмбеддинг после {MAX_RETRIES} попыток. Последняя ошибка: {last_error}")
-    return None
-
-async def update_embeddings(pool) -> Dict[str, int]:
+async def update_embeddings(pool, batch_size: int = 32) -> Dict[str, int]:
     """
     Находит статьи без эмбеддингов, генерирует их и сохраняет в БД.
     
+    Args:
+        pool: Пул подключений к БД
+        batch_size: Размер батча для обработки (по умолчанию 32)
+        
     Returns:
         Словарь со статистикой: {
-            'total': общее количество статей,
-            'processed': успешно обработано,
-            'failed': не удалось обработать
+            'processed': количество успешно обработанных статей,
+            'errors': количество ошибок
         }
     """
-    stats = {'total': 0, 'processed': 0, 'failed': 0}
-    
-    # Проверяем наличие API ключа
-    if not API_KEY:
-        error_msg = (
-            "\nОШИБКА: Не найден API ключ Hugging Face.\n"
-            "Пожалуйста, получите ключ на https://huggingface.co/settings/tokens\n"
-            "и добавьте его в файл .env в формате:\n"
-            'HF_API_TOKEN="hf_..."\n'
-        )
-        logger.error(error_msg)
-        return stats
-
-    logger.info("Начинаем обновление эмбеддингов...")
+    processed = 0
+    errors = 0
     
     try:
-        # Получаем статьи без эмбеддингов
-        articles_to_process = await get_articles_without_embeddings(pool)
-        stats['total'] = len(articles_to_process)
+        # Получаем все статьи без эмбеддингов
+        articles = await get_articles_without_embeddings(pool)
+        if not articles:
+            logger.info("Нет статей для обновления эмбеддингов.")
+            return {"processed": 0, "errors": 0}
+            
+        logger.info(f"Найдено {len(articles)} статей без эмбеддингов. Начинаем обработку...")
         
-        if not articles_to_process:
-            logger.info("Нет статей для генерации эмбеддингов.")
-            return stats
-
-        logger.info(f"Найдено {stats['total']} статей без эмбеддингов")
-        
-        # Используем один HTTP-клиент для всех запросов
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            for i, article in enumerate(articles_to_process, 1):
-                try:
-                    logger.debug(f"Обработка статьи {i}/{stats['total']}: {article['link']}")
-                    
-                    # Формируем текст для эмбеддинга
-                    text_to_embed = f"{article['title']} {article['description'] or ''}".strip()
-                    if not text_to_embed:
-                        logger.warning(f"Пустой текст для статьи {article['link']}")
-                        stats['failed'] += 1
-                        continue
-                    
-                    # Генерируем эмбеддинг
-                    embedding = await generate_embedding(text_to_embed, client)
-                    
-                    if embedding is None:
-                        logger.error(f"Не удалось сгенерировать эмбеддинг для статьи: {article['link']}")
-                        stats['failed'] += 1
-                        continue
-                    
-                    # Сохраняем эмбеддинг в БД
-                    await add_embedding(pool, article['link'], embedding)
-                    stats['processed'] += 1
-                    
-                    # Логируем прогресс
-                    if i % 10 == 0 or i == stats['total']:
-                        logger.info(f"Обработано {i}/{stats['total']} статей")
-                    
-                    # Небольшая задержка, чтобы не перегружать API
-                    await asyncio.sleep(1)
-                    
-                except Exception as e:
-                    logger.error(f"Ошибка при обработке статьи {article.get('link', 'unknown')}: {str(e)}", exc_info=True)
-                    stats['failed'] += 1
+        # Обрабатываем статьи батчами
+        for i in range(0, len(articles), batch_size):
+            batch = articles[i:i + batch_size]
+            batch_texts = []
+            valid_articles = []
+            
+            # Подготавливаем текст для эмбеддинга
+            for article in batch:
+                text_parts = []
+                if article['title']:
+                    text_parts.append(article['title'])
+                if article['description']:
+                    text_parts.append(article['description'])
+                
+                if not text_parts:
+                    logger.warning(f"Пустые title и description у статьи {article['link']}")
+                    errors += 1
                     continue
-        
-        # Итоговая статистика
-        logger.info(
-            f"Завершено. Обработано: {stats['processed']}/"
-            f"{stats['total']}, Ошибок: {stats['failed']}"
-        )
+                
+                # Используем published date для логирования, если доступно
+                pub_date = article.get('published', 'без даты')
+                logger.info(f"Обработка статьи: {article['title'][:50]}... (опубликовано: {pub_date})")
+                
+                text = ' '.join(text_parts)
+                batch_texts.append(text)
+                valid_articles.append(article)
+            
+            if not batch_texts:
+                continue
+                
+            try:
+                # Генерируем эмбеддинги для батча
+                embeddings = model.encode(
+                    batch_texts,
+                    batch_size=len(batch_texts),
+                    show_progress_bar=False,
+                    convert_to_numpy=True
+                )
+                
+                # Сохраняем эмбеддинги
+                for j, embedding in enumerate(embeddings):
+                    if j >= len(valid_articles):
+                        break
+                        
+                    article = valid_articles[j]
+                    try:
+                        # Преобразуем numpy массив в список
+                        embedding_list = embedding.tolist()
+                        
+                        # Сохраняем эмбеддинг
+                        await add_embedding(
+                            pool=pool,
+                            article_id=article['link'],
+                            embedding=embedding_list
+                        )
+                        processed += 1
+                        
+                        if processed % 10 == 0:
+                            logger.info(f"Обработано {processed} эмбеддингов...")
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка при сохранении эмбеддинга для статьи {article.get('link', 'unknown')}: {e}")
+                        errors += 1
+                        
+            except Exception as e:
+                logger.error(f"Ошибка при генерации эмбеддингов для батча: {e}")
+                errors += len(batch_texts)
+                continue
+                
+        logger.info(f"Обновление эмбеддингов завершено. Обработано: {processed}, ошибок: {errors}")
+        return {"processed": processed, "errors": errors}
         
     except Exception as e:
-        logger.error(f"Критическая ошибка при обновлении эмбеддингов: {str(e)}", exc_info=True)
-    
-    return stats
+        logger.error(f"Критическая ошибка при обновлении эмбеддингов: {e}", exc_info=True)
+        return {"processed": processed, "errors": errors + (len(articles) - processed) if 'articles' in locals() else 1}
