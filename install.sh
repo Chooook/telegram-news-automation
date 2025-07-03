@@ -29,17 +29,17 @@ fi
 
 # 4. Запуск PostgreSQL
 echo "=== Запускаем PostgreSQL в Docker ==="
-docker-compose up -d db
+docker compose up -d db
 
 # 5. Ждём запуска базы
 sleep 10
 
 # 6. Восстановление базы
 echo "=== Восстанавливаем базу данных из дампа ==="
-docker-compose exec -T db psql -U bot_user -d telegram_bot_db < $DUMP_FILE
+docker compose exec -T db psql -U bot_user -d telegram_bot_db < $DUMP_FILE
 
 # 7. Сборка и запуск бота
 echo "=== Собираем и запускаем бота ==="
-docker-compose up --build -d bot
+docker compose up --build -d bot
 
-echo "=== Всё готово! Бот и база работают в Docker! ===" 
+echo "=== Всё готово! Бот и база работают в Docker! ==="
