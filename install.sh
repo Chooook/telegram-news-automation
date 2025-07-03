@@ -1,17 +1,15 @@
 #!/bin/bash
 set -e
 
-REPO_URL="https://github.com/pankeig/telegram-news-automation.git"
 DUMP_FILE="mydb_dump.sql"
 
 # 1. Клонирование репозитория
 if [ ! -d telegram-news-automation ]; then
-  echo "=== Клонируем репозиторий ==="
-  git clone "$REPO_URL"
+  mkdir telegram-news-automation
 fi
+cp .env telegram-news-automation/.env
 cd telegram-news-automation
 
-# 2. Проверка .env
 # 2. Проверка .env
 if [ ! -f .env ]; then
   echo "⚠️  Нет .env! Создайте .env вручную."
