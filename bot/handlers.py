@@ -6,7 +6,7 @@ import logging
 from telethon import events
 from utils.config import ADMIN_USER_IDS, TELEGRAM_CHANNEL
 from bot.keyboards import (
-    get_admin_menu_text, 
+    get_admin_menu_text,
     get_channels_menu_text,
     get_admin_management_menu_text,
     ADMIN_COMMANDS_MAP,
@@ -23,10 +23,12 @@ from database.db_manager import (
     save_article, add_channel, get_channels, remove_channel,
     get_admins, add_admin, remove_admin
 )
-from scheduler.jobs import scheduled_parsing, scheduled_embedding_update, scheduled_post_publication, scheduled_weekly_summary
+from scheduler.jobs import (scheduled_parsing, scheduled_embedding_update,
+    scheduled_post_publication, scheduled_weekly_summary)
 from utils.telegram_web import send_web_message, get_chat_info
 
 logger = logging.getLogger(__name__)
+
 
 # --- Admin Management Handlers ---
 
@@ -37,14 +39,15 @@ async def handle_admin_management_menu(event, pool, client):
         return
     await event.respond(get_admin_management_menu_text())
 
+
 async def handle_admin_command(event, pool, client):
     """Обработчик команд меню управления администраторами"""
     if event.sender_id not in ADMIN_USER_IDS:
         await event.respond('У вас нет прав для выполнения этой команды.')
         return
-    
+
     command = event.text.strip()
-    
+
     if command == '1':  # Список админов
         await handle_list_admins(event, pool)
     elif command == '2':  # Добавить админа
@@ -54,8 +57,10 @@ async def handle_admin_command(event, pool, client):
     elif command == '0':  # Назад
         await event.respond(get_admin_menu_text())
     else:
-        await event.respond('Неизвестная команда. Пожалуйста, выберите действие из меню.')
+        await event.respond(
+            'Неизвестная команда. Пожалуйста, выберите действие из меню.')
         await event.respond(get_admin_management_menu_text())
+
 
 async def handle_list_admins(event, pool):
     """Показывает список всех администраторов"""
@@ -64,34 +69,41 @@ async def handle_list_admins(event, pool):
         if not admins:
             await event.respond('Список администраторов пуст.')
             return
-            
+
         admins_list = '\n'.join([f'• `{admin_id}`' for admin_id in admins])
         await event.respond(f'**Список администраторов:**\n{admins_list}')
     except Exception as e:
         logger.error(f'Ошибка при получении списка администраторов: {e}')
-        await event.respond('Произошла ошибка при получении списка администраторов.')
+        await event.respond(
+            'Произошла ошибка при получении списка администраторов.')
+
 
 async def handle_add_admin(event, pool, client):
     """Добавляет нового администратора"""
     try:
-        async with client.conversation(event.sender_id, timeout=60) as conv:
-            await conv.send_message('Введите ID пользователя, которого нужно сделать администратором:')
+        async with client.conversation(event.sender_id, timeout=300) as conv:
+            await conv.send_message(
+                'Введите ID пользователя, которого нужно сделать администратором:')
             response = await conv.get_response()
-            
+
             try:
                 user_id = int(response.text.strip())
                 await add_admin(pool, user_id)
-                await conv.send_message(f'Пользователь с ID `{user_id}` успешно добавлен в список администраторов.')
+                await conv.send_message(
+                    f'Пользователь с ID `{user_id}` успешно добавлен в список администраторов.')
             except ValueError:
                 await conv.send_message('Ошибка: ID должен быть числом.')
             except Exception as e:
                 logger.error(f'Ошибка при добавлении администратора: {e}')
-                await conv.send_message('Произошла ошибка при добавлении администратора.')
+                await conv.send_message(
+                    'Произошла ошибка при добавлении администратора.')
     except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Пожалуйста, попробуйте снова.')
+        await event.respond(
+            'Время ожидания истекло. Пожалуйста, попробуйте снова.')
     except Exception as e:
         logger.error(f'Ошибка в handle_add_admin: {e}')
         await event.respond('Произошла непредвиденная ошибка.')
+
 
 async def handle_remove_admin(event, pool, client):
     """Удаляет администратора"""
@@ -100,41 +112,47 @@ async def handle_remove_admin(event, pool, client):
         if not admins:
             await event.respond('Список администраторов пуст.')
             return
-            
-        admins_list = '\n'.join([f'{i+1}. `{admin[0]}`' for i, admin in enumerate(admins)])
-        
-        async with client.conversation(event.sender_id, timeout=60) as conv:
+
+        admins_list = '\n'.join(
+            [f'{i + 1}. `{admin_id}`' for i, admin_id in enumerate(admins)])
+
+        async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message(
                 'Выберите номер администратора для удаления:\n' +
                 admins_list
             )
             response = await conv.get_response()
-            
+
             try:
                 index = int(response.text.strip()) - 1
                 if 0 <= index < len(admins):
                     admin_id = admins[index]
                     if admin_id == event.sender_id:
-                        await conv.send_message('Вы не можете удалить сами себя.')
+                        await conv.send_message(
+                            'Вы не можете удалить сами себя.')
                         return
                     await remove_admin(pool, admin_id)
-                    await conv.send_message(f'Пользователь с ID `{admin_id}` удален из списка администраторов.')
+                    await conv.send_message(
+                        f'Пользователь с ID `{admin_id}` удален из списка администраторов.')
                 else:
                     await conv.send_message('Неверный номер администратора.')
             except ValueError:
                 await conv.send_message('Пожалуйста, введите число.')
     except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Пожалуйста, попробуйте снова.')
+        await event.respond(
+            'Время ожидания истекло. Пожалуйста, попробуйте снова.')
     except Exception as e:
         logger.error(f'Ошибка в handle_remove_admin: {e}')
         await event.respond('Произошла ошибка при удалении администратора.')
+
 
 # --- Individual Command Handlers ---
 
 async def handle_status(event, pool):
     try:
         await event.respond('Собираю информацию о статусе системы...')
-        current_theme = await get_setting(pool, 'weekly_theme') or 'не установлена'
+        current_theme = await get_setting(pool,
+                                          'weekly_theme') or 'не установлена'
         stats = await get_db_status(pool)
         status_message = (
             f"**Статус системы**\n\n"
@@ -146,11 +164,14 @@ async def handle_status(event, pool):
     except Exception as e:
         await event.respond(f'Ошибка при получении статуса: {e}')
 
+
 async def handle_set_theme(event, pool, client):
     try:
-        async with client.conversation(event.sender_id, timeout=60) as conv:
-            current_theme = await get_setting(pool, 'weekly_theme') or 'не установлена'
-            await conv.send_message(f'Текущая тема недели: {current_theme}.\nВведите новую тему:')
+        async with client.conversation(event.sender_id, timeout=300) as conv:
+            current_theme = await get_setting(pool,
+                                              'weekly_theme') or 'не установлена'
+            await conv.send_message(
+                f'Текущая тема недели: {current_theme}.\nВведите новую тему:')
             response = await conv.get_response()
             new_theme = response.text.strip()
             if not new_theme:
@@ -163,40 +184,51 @@ async def handle_set_theme(event, pool, client):
     except Exception as e:
         await event.respond(f'Ошибка при установке темы: {e}')
 
+
 async def handle_add_article(event, pool, client):
     try:
         async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message('Отправьте URL статьи, которую хотите добавить:')
+            await conv.send_message(
+                'Отправьте URL статьи, которую хотите добавить:')
             url_message = await conv.get_response()
             url = url_message.text.strip()
-            await conv.send_message('Теперь введите теги через запятую (например: ai, ml, longread):')
+            await conv.send_message(
+                'Теперь введите теги через запятую (например: ai, ml, longread):')
             tags_message = await conv.get_response()
             tags = [tag.strip() for tag in tags_message.text.split(',')]
             await conv.send_message('Пытаюсь получить данные со страницы...')
             try:
                 title, content = await parse_single_article_content(url)
                 if not title:
-                    await conv.send_message('Не удалось автоматически определить заголовок. Введите его вручную:')
+                    await conv.send_message(
+                        'Не удалось автоматически определить заголовок. Введите его вручную:')
                     title_message = await conv.get_response()
                     title = title_message.text.strip()
             except Exception as e:
-                await conv.send_message(f'Не удалось получить данные со страницы: {e}. Введите заголовок вручную:')
+                await conv.send_message(
+                    f'Не удалось получить данные со страницы: {e}. Введите заголовок вручную:')
                 title_message = await conv.get_response()
                 title = title_message.text.strip()
                 content = ''
-            await conv.send_message(f'**Заголовок:** {title}\n**URL:** {url}\n**Теги:** {tags}\n\nСохранить эту статью? (Да/Нет)')
+            await conv.send_message(
+                f'**Заголовок:** {title}\n**URL:** {url}\n**Теги:** {tags}\n\nСохранить эту статью? (Да/Нет)')
             confirmation = await conv.get_response()
-            if confirmation.text.lower() == 'да':
+            if confirmation.text.lower() in ['да', 'д', 'yes', 'y']:
                 try:
-                    await save_article(pool, title, url, content, 'manual', tags, datetime.datetime.now())
-                    await conv.send_message('Статья успешно добавлена. Запускаю генерацию эмбеддингов...')
+                    await save_article(pool, title, url, content, 'manual',
+                                       tags, datetime.datetime.now(datetime.UTC))
+                    await conv.send_message(
+                        'Статья успешно добавлена. Запускаю генерацию эмбеддингов...')
                     await update_embeddings(pool)
-                    await conv.send_message('Эмбеддинги для новой статьи созданы.')
+                    await conv.send_message(
+                        'Эмбеддинги для новой статьи созданы.')
                 except Exception as e:
                     if 'duplicate key value' in str(e):
-                        await conv.send_message('Эта статья уже есть в базе данных.')
+                        await conv.send_message(
+                            'Эта статья уже есть в базе данных.')
                     else:
-                        await conv.send_message(f'Ошибка при сохранении статьи: {e}')
+                        await conv.send_message(
+                            f'Ошибка при сохранении статьи: {e}')
             else:
                 await conv.send_message('Добавление статьи отменено.')
     except asyncio.TimeoutError:
@@ -204,9 +236,10 @@ async def handle_add_article(event, pool, client):
     except Exception as e:
         await event.respond(f'Произошла ошибка: {e}')
 
+
 async def handle_search(event, pool, client):
     try:
-        async with client.conversation(event.sender_id, timeout=60) as conv:
+        async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message('Введите ваш поисковый запрос:')
             response = await conv.get_response()
             query = response.text
@@ -225,6 +258,7 @@ async def handle_search(event, pool, client):
     except Exception as e:
         await event.respond(f'Ошибка во время поиска: {e}')
 
+
 async def handle_parsing(event, pool, client):
     await event.respond('Запускаю парсинг...')
     try:
@@ -232,6 +266,7 @@ async def handle_parsing(event, pool, client):
         await event.respond('Парсинг завершен.')
     except Exception as e:
         await event.respond(f'Ошибка во время парсинга: {e}')
+
 
 async def handle_embeddings(event, pool):
     await event.respond('Запускаю генерацию эмбеддингов...')
@@ -241,9 +276,10 @@ async def handle_embeddings(event, pool):
     except Exception as e:
         await event.respond(f'Ошибка во время генерации эмбеддингов: {e}')
 
+
 async def handle_summary(event, pool, client):
     try:
-        async with client.conversation(event.sender_id, timeout=60) as conv:
+        async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message('Введите тему для еженедельного саммари:')
             response = await conv.get_response()
             theme = response.text
@@ -255,6 +291,7 @@ async def handle_summary(event, pool, client):
     except Exception as e:
         await event.respond(f'Ошибка во время создания саммари: {e}')
 
+
 async def handle_db_status(event, pool):
     try:
         await event.respond('Получаю статистику базы данных...')
@@ -265,6 +302,7 @@ async def handle_db_status(event, pool):
         await event.respond(stats_message)
     except Exception as e:
         await event.respond(f'Ошибка при получении состояния базы: {e}')
+
 
 async def handle_view_logs(event):
     try:
@@ -287,6 +325,7 @@ async def handle_view_logs(event):
     except Exception as e:
         await event.respond(f'Ошибка при просмотре логов: {e}')
 
+
 async def handle_weekly_training(event, pool, client):
     """
     Запускает полный сценарий недели:
@@ -298,45 +337,47 @@ async def handle_weekly_training(event, pool, client):
         if event.sender_id not in ADMIN_USER_IDS:
             await event.respond('У вас нет прав для выполнения этой команды.')
             return
-            
+
         await event.respond('🚀 Запуск полного недельного сценария...')
-        
+
         # Get the current weekly theme
         theme = await get_setting(pool, 'weekly_theme')
         if not theme:
-            await event.respond('❌ Ошибка: Не установлена тема недели. Пожалуйста, установите тему с помощью команды /set_theme')
+            await event.respond(
+                '❌ Ошибка: Не установлена тема недели. Пожалуйста, установите тему с помощью команды /set_theme')
             return
-            
+
         target_channel = TELEGRAM_CHANNEL or '@test_chanellmy'
-        
+
         # 1. Send weekly theme message
         theme_message = f"📅 *Тема недели*: {theme}\n\n"
         theme_message += "На этой неделе мы будем обсуждать актуальные новости по этой теме. "
         theme_message += "Следите за нашими публикациями! 🚀"
-        
+
         await event.respond('📢 Отправляю сообщение с темой недели...')
         await send_web_message(
             chat_id=target_channel,
             text=theme_message,
             parse_mode='Markdown'
         )
-        
+
         # 2. Update embeddings and get articles
         await event.respond('🔄 Обновляю эмбеддинги...')
         await update_embeddings(pool)
-        
+
         # 3. Find and schedule posts for the week
         await event.respond('📅 Составляю расписание постов на неделю...')
-        
+
         # Get theme embedding for finding relevant articles
         from search.embeddings import generate_embedding
         from datetime import datetime, timedelta
-        
+
         theme_embedding = await generate_embedding(theme)
         if not theme_embedding:
-            await event.respond('❌ Ошибка: Не удалось сгенерировать эмбеддинг темы')
+            await event.respond(
+                '❌ Ошибка: Не удалось сгенерировать эмбеддинг темы')
             return
-        
+
         # Ensure theme_embedding is in the correct format (list of floats)
         if isinstance(theme_embedding, str):
             # Try to convert from string representation if needed
@@ -368,21 +409,22 @@ async def handle_weekly_training(event, pool, client):
             ORDER BY similarity DESC
             LIMIT 8  -- 1(пн) + 2(вт) + 2(ср) + 2(чт) + 1(пт) = 8 постов
         """
-        
+
         async with pool.acquire() as conn:
             # Use the numpy array directly - asyncpg will handle the conversion
             articles = await conn.fetch(query, embedding_array)
-        
+
         if not articles or len(articles) < 8:
-            await event.respond('❌ Ошибка: Недостаточно статей для публикации (нужно минимум 8)')
+            await event.respond(
+                '❌ Ошибка: Недостаточно статей для публикации (нужно минимум 8)')
             if articles:
                 await event.respond(f'Найдено только {len(articles)} статей')
             return
-        
+
         # Save articles to database for scheduled posting
         scheduled_posts = []
         article_index = 0
-        
+
         # Monday - 1 post
         scheduled_posts.append({
             'day': 0,  # Monday (0 = Monday in isoweekday)
@@ -390,7 +432,7 @@ async def handle_weekly_training(event, pool, client):
             'article': articles[article_index]
         })
         article_index += 1
-        
+
         # Tuesday-Thursday - 2 posts per day
         for day in [1, 2, 3]:  # Tuesday (1) to Thursday (3)
             scheduled_posts.append({
@@ -399,27 +441,27 @@ async def handle_weekly_training(event, pool, client):
                 'article': articles[article_index]
             })
             article_index += 1
-            
+
             scheduled_posts.append({
                 'day': day,
                 'time': '19:00',
                 'article': articles[article_index]
             })
             article_index += 1
-        
+
         # Friday - 1 post
         scheduled_posts.append({
             'day': 4,  # Friday
             'time': '12:00',
             'article': articles[article_index]
         })
-        
+
         # Publish all posts immediately with delays
         await event.respond('🚀 Публикую все посты...')
-        
+
         # Get the target channel(s)
         channels = [target_channel]  # Use the target channel defined earlier
-        
+
         try:
             for i, article in enumerate(articles, 1):
                 try:
@@ -430,7 +472,7 @@ async def handle_weekly_training(event, pool, client):
                         f"🔗 [Читать статью]({article['link']})\n"
                         "#новости #аналитика"
                     )
-                    
+
                     # Send to all channels with error handling and retry
                     for channel in channels:
                         try:
@@ -445,18 +487,18 @@ async def handle_weekly_training(event, pool, client):
                         except Exception as e:
                             logger.error(f"Error sending to {channel}: {e}")
                             continue
-                    
+
                     # Add delay between different posts (5 seconds)
                     if i < len(articles):
                         await asyncio.sleep(5)
-                        
+
                 except Exception as e:
                     logger.error(f"Error formatting post {i}: {e}")
                     continue
-            
+
             # Create and publish summary immediately with better formatting
             await event.respond("📊 Готовлю еженедельный дайджест...")
-            
+
             try:
                 # Create a well-formatted summary
                 summary = (
@@ -464,7 +506,7 @@ async def handle_weekly_training(event, pool, client):
                     f"📌 Тема недели: *{theme}*\n\n"
                     "📚 *Самые интересные материалы:*\n\n"
                 )
-                
+
                 # Add each article with consistent formatting
                 for i, article in enumerate(articles, 1):
                     article_text = (
@@ -474,20 +516,20 @@ async def handle_weekly_training(event, pool, client):
                         desc = article['description'].strip()
                         article_text += f"   {desc[:150]}{'...' if len(desc) > 150 else ''}\n"
                     article_text += f"   🔗 [Читать статью]({article['link']})\n\n"
-                    
+
                     # Add article to summary if it fits (Telegram limit is 4096 chars)
                     if len(summary + article_text) < 3800:  # Leave some space for footer
                         summary += article_text
                     else:
                         summary += "\n...и другие интересные материалы!"
                         break
-                
+
                 # Add footer with engagement
                 summary += (
                     "\n💬 Какая тема была для вас самой интересной? Делитесь в комментариях!\n"
                     "🔔 Подпишитесь, чтобы не пропустить новые материалы!"
                 )
-                
+
                 # Send summary to all channels with error handling
                 for channel in channels:
                     try:
@@ -499,54 +541,63 @@ async def handle_weekly_training(event, pool, client):
                         )
                         await asyncio.sleep(3)  # Delay between channel sends
                     except Exception as e:
-                        logger.error(f"Error sending summary to {channel}: {e}")
+                        logger.error(
+                            f"Error sending summary to {channel}: {e}")
                         continue
-                        
-                await event.respond('✅ Еженедельное саммари успешно опубликовано!')
-                
+
+                await event.respond(
+                    '✅ Еженедельное саммари успешно опубликовано!')
+
             except Exception as e:
                 logger.error(f"Error creating summary: {e}")
-                await event.respond(f'❌ Ошибка при создании дайджеста: {str(e)[:200]}')
-            
+                await event.respond(
+                    f'❌ Ошибка при создании дайджеста: {str(e)[:200]}')
+
         except Exception as e:
             logger.error(f"Error in weekly training: {e}")
             await event.respond(f'❌ Ошибка: {str(e)[:200]}')
-            
+
         await event.respond('🎉 Недельный сценарий успешно выполнен!')
-        
+
     except Exception as e:
         error_msg = f'❌ Ошибка при выполнении недельного сценария: {str(e)}'
         logger.error(error_msg, exc_info=True)
         await event.respond(error_msg)
-        await event.respond(f'Ошибка при выполнении еженедельного обучения: {e}')
+        await event.respond(
+            f'Ошибка при выполнении еженедельного обучения: {e}')
+
 
 async def handle_channels_menu(event, pool, client):
     """Показывает меню управления каналами"""
     if event.sender_id not in ADMIN_USER_IDS:
         await event.respond('У вас нет прав для выполнения этой команды.')
         return
-    
+
     # Отправляем меню управления каналами
     await event.respond(get_channels_menu_text())
+
 
 async def handle_add_channel(event, pool, client):
     try:
         if event.sender_id not in ADMIN_USER_IDS:
             await event.respond('У вас нет прав для выполнения этой команды.')
             return
-        async with client.conversation(event.sender_id, timeout=60) as conv:
-            await conv.send_message('Введите username канала (например, @channel_name или https://t.me/channel_name):')
+        async with client.conversation(event.sender_id, timeout=300) as conv:
+            await conv.send_message(
+                'Введите username канала (например, @channel_name или https://t.me/channel_name):')
             response = await conv.get_response()
             channel = response.text.strip()
             if 't.me/' in channel:
                 channel = channel.split('t.me/')[-1].split('/')[0]
             channel = channel.replace('@', '')
             await add_channel(pool, channel)
-            await conv.send_message(f'Канал @{channel} успешно добавлен в список источников.')
+            await conv.send_message(
+                f'Канал @{channel} успешно добавлен в список источников.')
     except asyncio.TimeoutError:
         await event.respond('Время ожидания истекло. Попробуйте снова.')
     except Exception as e:
         await event.respond(f'Ошибка при добавлении канала: {e}')
+
 
 async def handle_remove_channel(event, pool, client):
     try:
@@ -557,16 +608,19 @@ async def handle_remove_channel(event, pool, client):
         if not channels:
             await event.respond('Список каналов пуст.')
             return
-        channels_list = '\n'.join([f'{i+1}. @{channel}' for i, channel in enumerate(channels)])
-        async with client.conversation(event.sender_id, timeout=60) as conv:
-            await conv.send_message(f'Выберите номер канала для удаления:\n{channels_list}')
+        channels_list = '\n'.join(
+            [f'{i + 1}. @{channel}' for i, channel in enumerate(channels)])
+        async with client.conversation(event.sender_id, timeout=300) as conv:
+            await conv.send_message(
+                f'Выберите номер канала для удаления:\n{channels_list}')
             response = await conv.get_response()
             try:
                 index = int(response.text.strip()) - 1
                 if 0 <= index < len(channels):
                     channel = channels[index]
                     await remove_channel(pool, channel)
-                    await conv.send_message(f'Канал @{channel} успешно удален.')
+                    await conv.send_message(
+                        f'Канал @{channel} успешно удален.')
                 else:
                     await conv.send_message('Неверный номер канала.')
             except ValueError:
@@ -576,6 +630,7 @@ async def handle_remove_channel(event, pool, client):
     except Exception as e:
         await event.respond(f'Ошибка при удалении канала: {e}')
 
+
 async def handle_list_channels(event, pool):
     """Показывает список всех каналов для парсинга"""
     try:
@@ -583,21 +638,23 @@ async def handle_list_channels(event, pool):
         if not channels:
             await event.respond('Список каналов пуст.')
             return
-            
+
         channels_list = '\n'.join([f'• @{channel}' for channel in channels])
-        await event.respond(f'**Список отслеживаемых каналов:**\n{channels_list}')
+        await event.respond(
+            f'**Список отслеживаемых каналов:**\n{channels_list}')
     except Exception as e:
         logger.error(f'Ошибка при получении списка каналов: {e}')
         await event.respond('Произошла ошибка при получении списка каналов.')
+
 
 async def handle_channel_command(event, pool, client):
     """Обработчик команд меню управления каналами"""
     if event.sender_id not in ADMIN_USER_IDS:
         await event.respond('У вас нет прав для выполнения этой команды.')
         return
-    
+
     command = event.text.strip()
-    
+
     if command == '1':  # Список каналов
         await handle_list_channels(event, pool)
     elif command == '2':  # Добавить канал
@@ -607,13 +664,16 @@ async def handle_channel_command(event, pool, client):
     elif command == '0':  # Назад
         await event.respond(get_admin_menu_text())
     else:
-        await event.respond('Неизвестная команда. Пожалуйста, выберите действие из меню.')
+        await event.respond(
+            'Неизвестная команда. Пожалуйста, выберите действие из меню.')
         await event.respond(get_channels_menu_text())
+
 
 # --- Main Handler Registration ---
 
 async def register_handlers(client, pool):
     """Register all message handlers."""
+
     @client.on(events.NewMessage(pattern='/start'))
     async def start_handler(event):
         if event.sender_id in ADMIN_USER_IDS:
@@ -622,23 +682,28 @@ async def register_handlers(client, pool):
             await event.respond('Извините, у вас нет доступа к этой команде.')
         raise events.StopPropagation
 
-    @client.on(events.NewMessage(func=lambda e: e.text == '5' and e.sender_id in ADMIN_USER_IDS))
+    @client.on(events.NewMessage(
+        func=lambda e: e.text == '5' and e.sender_id in ADMIN_USER_IDS))
     async def channels_menu_handler(event):
         await handle_channels_menu(event, pool, client)
-        
-    @client.on(events.NewMessage(func=lambda e: e.text in CHANNEL_COMMANDS_MAP.keys() and e.sender_id in ADMIN_USER_IDS))
+
+    @client.on(events.NewMessage(func=lambda
+            e: e.text in CHANNEL_COMMANDS_MAP.keys() and e.sender_id in ADMIN_USER_IDS))
     async def channel_command_handler(event):
         await handle_channel_command(event, pool, client)
-        
-    @client.on(events.NewMessage(func=lambda e: e.text == '6' and e.sender_id in ADMIN_USER_IDS))
+
+    @client.on(events.NewMessage(
+        func=lambda e: e.text == '6' and e.sender_id in ADMIN_USER_IDS))
     async def admin_management_menu_handler(event):
         await handle_admin_management_menu(event, pool, client)
-        
-    @client.on(events.NewMessage(func=lambda e: e.text in ADMIN_MANAGEMENT_MAP.keys() and e.sender_id in ADMIN_USER_IDS))
+
+    @client.on(events.NewMessage(func=lambda
+            e: e.text in ADMIN_MANAGEMENT_MAP.keys() and e.sender_id in ADMIN_USER_IDS))
     async def admin_command_handler(event):
         await handle_admin_command(event, pool, client)
-        
-    @client.on(events.NewMessage(func=lambda e: e.text == '7' and e.sender_id in ADMIN_USER_IDS))
+
+    @client.on(events.NewMessage(
+        func=lambda e: e.text == '7' and e.sender_id in ADMIN_USER_IDS))
     async def parsing_handler(event):
         await handle_parsing(event, pool, client)
 
@@ -647,7 +712,7 @@ async def register_handlers(client, pool):
         # Пропускаем команды, которые уже обработаны другими хендлерами
         if event.text.strip() in CHANNEL_COMMANDS_MAP or event.text.strip() in ADMIN_MANAGEMENT_MAP:
             return
-            
+
         command = event.text.strip()
         if command == '/start':
             return
@@ -681,7 +746,9 @@ async def register_handlers(client, pool):
         await asyncio.sleep(1)
         await event.respond(get_admin_menu_text())
 
-    @client.on(events.NewMessage(pattern='(?i)^(Добавить канал|Удалить канал|Список каналов|Назад)$', from_users=ADMIN_USER_IDS))
+    @client.on(events.NewMessage(
+        pattern='(?i)^(Добавить канал|Удалить канал|Список каналов|Назад)$',
+        from_users=ADMIN_USER_IDS))
     async def channels_submenu_handler(event):
         command = event.text.strip().lower()
         if command == 'добавить канал':

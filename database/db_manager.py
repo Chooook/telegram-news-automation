@@ -104,8 +104,9 @@ async def ensure_database_schema(pool):
                 );
                 
                 CREATE TABLE IF NOT EXISTS channels (
-                    username TEXT PRIMARY KEY
-                );
+                username TEXT PRIMARY KEY,
+                added_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
                 
                 CREATE TABLE IF NOT EXISTS channel_states (
                     username TEXT PRIMARY KEY,
