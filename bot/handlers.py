@@ -29,6 +29,31 @@ from utils.telegram_web import send_web_message, get_chat_info
 
 logger = logging.getLogger(__name__)
 
+# --- Состояния пользователей ---
+user_states = {}
+
+
+class UserState:
+    MAIN_MENU = "main_menu"
+    CHANNELS_MENU = "channels_menu"
+    ADMIN_MANAGEMENT_MENU = "admin_management_menu"
+    ADDING_ADMIN = "adding_admin"
+    REMOVING_ADMIN = "removing_admin"
+    ADDING_CHANNEL = "adding_channel"
+    REMOVING_CHANNEL = "removing_channel"
+    SETTING_THEME = "setting_theme"
+    ADDING_ARTICLE = "adding_article"
+    SEARCHING = "searching"
+    SUMMARY = "summary"
+
+
+def set_user_state(user_id, state):
+    user_states[user_id] = state
+
+
+def get_user_state(user_id):
+    return user_states.get(user_id, UserState.MAIN_MENU)
+
 
 # --- Admin Management Handlers ---
 
@@ -37,6 +62,7 @@ async def handle_admin_management_menu(event, pool, client):
     if event.sender_id not in ADMIN_USER_IDS:
         await event.respond('У вас нет прав для выполнения этой команды.')
         return
+    set_user_state(event.sender_id, UserState.ADMIN_MANAGEMENT_MENU)
     await event.respond(get_admin_management_menu_text())
 
 
@@ -51,10 +77,12 @@ async def handle_admin_command(event, pool, client):
     if command == '1':  # Список админов
         await handle_list_admins(event, pool)
     elif command == '2':  # Добавить админа
+        set_user_state(event.sender_id, UserState.ADDING_ADMIN)
         await handle_add_admin(event, pool, client)
     elif command == '3':  # Удалить админа
         await handle_remove_admin(event, pool, client)
     elif command == '0':  # Назад
+        set_user_state(event.sender_id, UserState.MAIN_MENU)
         await event.respond(get_admin_menu_text())
     else:
         await event.respond(
@@ -79,7 +107,6 @@ async def handle_list_admins(event, pool):
 
 
 async def handle_add_admin(event, pool, client):
-    """Добавляет нового администратора"""
     try:
         async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message(
@@ -103,10 +130,11 @@ async def handle_add_admin(event, pool, client):
     except Exception as e:
         logger.error(f'Ошибка в handle_add_admin: {e}')
         await event.respond('Произошла непредвиденная ошибка.')
+    finally:
+        set_user_state(event.sender_id, UserState.ADMIN_MANAGEMENT_MENU)
 
 
 async def handle_remove_admin(event, pool, client):
-    """Удаляет администратора"""
     try:
         admins = await get_admins(pool)
         if not admins:
@@ -167,6 +195,7 @@ async def handle_status(event, pool):
 
 async def handle_set_theme(event, pool, client):
     try:
+        set_user_state(event.sender_id, UserState.SETTING_THEME)
         async with client.conversation(event.sender_id, timeout=300) as conv:
             current_theme = await get_setting(pool,
                                               'weekly_theme') or 'не установлена'
@@ -183,10 +212,13 @@ async def handle_set_theme(event, pool, client):
         await event.respond('Время ожидания истекло. Попробуйте снова.')
     except Exception as e:
         await event.respond(f'Ошибка при установке темы: {e}')
+    finally:
+        set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_add_article(event, pool, client):
     try:
+        set_user_state(event.sender_id, UserState.ADDING_ARTICLE)
         async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message(
                 'Отправьте URL статьи, которую хотите добавить:')
@@ -216,7 +248,7 @@ async def handle_add_article(event, pool, client):
             if confirmation.text.lower() in ['да', 'д', 'yes', 'y']:
                 try:
                     await save_article(pool, title, url, content, 'manual',
-                                       tags, datetime.datetime.now(datetime.UTC))
+                                       tags, datetime.datetime.utcnow())
                     await conv.send_message(
                         'Статья успешно добавлена. Запускаю генерацию эмбеддингов...')
                     await update_embeddings(pool)
@@ -235,10 +267,13 @@ async def handle_add_article(event, pool, client):
         await event.respond('Время ожидания истекло. Попробуйте снова.')
     except Exception as e:
         await event.respond(f'Произошла ошибка: {e}')
+    finally:
+        set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_search(event, pool, client):
     try:
+        set_user_state(event.sender_id, UserState.SEARCHING)
         async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message('Введите ваш поисковый запрос:')
             response = await conv.get_response()
@@ -257,6 +292,8 @@ async def handle_search(event, pool, client):
         await event.respond('Время ожидания истекло. Попробуйте снова.')
     except Exception as e:
         await event.respond(f'Ошибка во время поиска: {e}')
+    finally:
+        set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_parsing(event, pool, client):
@@ -279,6 +316,7 @@ async def handle_embeddings(event, pool):
 
 async def handle_summary(event, pool, client):
     try:
+        set_user_state(event.sender_id, UserState.SUMMARY)
         async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message('Введите тему для еженедельного саммари:')
             response = await conv.get_response()
@@ -290,6 +328,8 @@ async def handle_summary(event, pool, client):
         await event.respond('Время ожидания истекло. Попробуйте снова.')
     except Exception as e:
         await event.respond(f'Ошибка во время создания саммари: {e}')
+    finally:
+        set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_db_status(event, pool):
@@ -572,8 +612,7 @@ async def handle_channels_menu(event, pool, client):
     if event.sender_id not in ADMIN_USER_IDS:
         await event.respond('У вас нет прав для выполнения этой команды.')
         return
-
-    # Отправляем меню управления каналами
+    set_user_state(event.sender_id, UserState.CHANNELS_MENU)
     await event.respond(get_channels_menu_text())
 
 
@@ -582,6 +621,7 @@ async def handle_add_channel(event, pool, client):
         if event.sender_id not in ADMIN_USER_IDS:
             await event.respond('У вас нет прав для выполнения этой команды.')
             return
+        set_user_state(event.sender_id, UserState.ADDING_CHANNEL)
         async with client.conversation(event.sender_id, timeout=300) as conv:
             await conv.send_message(
                 'Введите username канала (например, @channel_name или https://t.me/channel_name):')
@@ -597,6 +637,8 @@ async def handle_add_channel(event, pool, client):
         await event.respond('Время ожидания истекло. Попробуйте снова.')
     except Exception as e:
         await event.respond(f'Ошибка при добавлении канала: {e}')
+    finally:
+        set_user_state(event.sender_id, UserState.CHANNELS_MENU)
 
 
 async def handle_remove_channel(event, pool, client):
@@ -604,6 +646,7 @@ async def handle_remove_channel(event, pool, client):
         if event.sender_id not in ADMIN_USER_IDS:
             await event.respond('У вас нет прав для выполнения этой команды.')
             return
+        set_user_state(event.sender_id, UserState.REMOVING_CHANNEL)
         channels = await get_channels(pool)
         if not channels:
             await event.respond('Список каналов пуст.')
@@ -629,6 +672,8 @@ async def handle_remove_channel(event, pool, client):
         await event.respond('Время ожидания истекло. Попробуйте снова.')
     except Exception as e:
         await event.respond(f'Ошибка при удалении канала: {e}')
+    finally:
+        set_user_state(event.sender_id, UserState.CHANNELS_MENU)
 
 
 async def handle_list_channels(event, pool):
@@ -662,6 +707,7 @@ async def handle_channel_command(event, pool, client):
     elif command == '3':  # Удалить канал
         await handle_remove_channel(event, pool, client)
     elif command == '0':  # Назад
+        set_user_state(event.sender_id, UserState.MAIN_MENU)
         await event.respond(get_admin_menu_text())
     else:
         await event.respond(
@@ -676,49 +722,49 @@ async def register_handlers(client, pool):
 
     @client.on(events.NewMessage(pattern='/start'))
     async def start_handler(event):
+        set_user_state(event.sender_id, UserState.MAIN_MENU)
         if event.sender_id in ADMIN_USER_IDS:
             await event.respond(get_admin_menu_text())
         else:
             await event.respond('Извините, у вас нет доступа к этой команде.')
         raise events.StopPropagation
 
-    @client.on(events.NewMessage(
-        func=lambda e: e.text == '5' and e.sender_id in ADMIN_USER_IDS))
-    async def channels_menu_handler(event):
-        await handle_channels_menu(event, pool, client)
-
-    @client.on(events.NewMessage(func=lambda
-            e: e.text in CHANNEL_COMMANDS_MAP.keys() and e.sender_id in ADMIN_USER_IDS))
-    async def channel_command_handler(event):
-        await handle_channel_command(event, pool, client)
-
-    @client.on(events.NewMessage(
-        func=lambda e: e.text == '6' and e.sender_id in ADMIN_USER_IDS))
-    async def admin_management_menu_handler(event):
-        await handle_admin_management_menu(event, pool, client)
-
-    @client.on(events.NewMessage(func=lambda
-            e: e.text in ADMIN_MANAGEMENT_MAP.keys() and e.sender_id in ADMIN_USER_IDS))
-    async def admin_command_handler(event):
-        await handle_admin_command(event, pool, client)
-
-    @client.on(events.NewMessage(
-        func=lambda e: e.text == '7' and e.sender_id in ADMIN_USER_IDS))
-    async def parsing_handler(event):
-        await handle_parsing(event, pool, client)
-
     @client.on(events.NewMessage(from_users=ADMIN_USER_IDS))
-    async def main_admin_handler(event):
-        # Пропускаем команды, которые уже обработаны другими хендлерами
-        if event.text.strip() in CHANNEL_COMMANDS_MAP or event.text.strip() in ADMIN_MANAGEMENT_MAP:
+    async def main_handler(event):
+        current_state = get_user_state(event.sender_id)
+        command = event.text.strip()
+
+        # Обработка состояний
+        if current_state == UserState.CHANNELS_MENU:
+            if command in CHANNEL_COMMANDS_MAP:
+                await handle_channel_command(event, pool, client)
+            else:
+                await event.respond(
+                    "Пожалуйста, используйте команды из текущего меню")
+                await event.respond(get_channels_menu_text())
             return
 
-        command = event.text.strip()
+        if current_state == UserState.ADMIN_MANAGEMENT_MENU:
+            if command in ADMIN_MANAGEMENT_MAP:
+                await handle_admin_command(event, pool, client)
+            else:
+                await event.respond(
+                    "Пожалуйста, используйте команды из текущего меню")
+                await event.respond(get_admin_management_menu_text())
+            return
+
+        # Главное меню
         if command == '/start':
             return
+
         if command not in ADMIN_COMMANDS_MAP:
+            await event.respond(
+                "Неизвестная команда. Пожалуйста, выберите действие из меню.")
+            await event.respond(get_admin_menu_text())
             return
+
         command_name = ADMIN_COMMANDS_MAP[command]
+
         if command_name == "Статус":
             await handle_status(event, pool)
         elif command_name == "Задать тему недели":
@@ -741,21 +787,8 @@ async def register_handlers(client, pool):
             await handle_weekly_training(event, pool, client)
         elif command_name == "Управление каналами":
             await handle_channels_menu(event, pool, client)
+        elif command_name == "Управление админами":
+            await handle_admin_management_menu(event, pool, client)
         elif command_name == "Назад":
-            await event.respond(get_admin_menu_text())
-        await asyncio.sleep(1)
-        await event.respond(get_admin_menu_text())
-
-    @client.on(events.NewMessage(
-        pattern='(?i)^(Добавить канал|Удалить канал|Список каналов|Назад)$',
-        from_users=ADMIN_USER_IDS))
-    async def channels_submenu_handler(event):
-        command = event.text.strip().lower()
-        if command == 'добавить канал':
-            await handle_add_channel(event, pool, client)
-        elif command == 'удалить канал':
-            await handle_remove_channel(event, pool, client)
-        elif command == 'список каналов':
-            await handle_list_channels(event, pool)
-        elif command == 'назад':
+            set_user_state(event.sender_id, UserState.MAIN_MENU)
             await event.respond(get_admin_menu_text())
