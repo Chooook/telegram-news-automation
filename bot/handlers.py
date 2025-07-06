@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # --- Состояния пользователей ---
 user_states = {}
+user_data = {}  # Для хранения временных данных пользователя
 
 
 class UserState:
@@ -45,40 +46,41 @@ class UserState:
     ADDING_ARTICLE = "adding_article"
     SEARCHING = "searching"
     SUMMARY = "summary"
+    IN_DIALOG = "in_dialog"  # Общее состояние для всех диалогов
 
 
-def set_user_state(user_id, state):
+def set_user_state(user_id, state, data=None):
     user_states[user_id] = state
+    if data:
+        user_data[user_id] = data
+    elif user_id in user_data:
+        del user_data[user_id]
 
 
 def get_user_state(user_id):
     return user_states.get(user_id, UserState.MAIN_MENU)
 
 
+def get_user_data(user_id):
+    return user_data.get(user_id, {})
+
+
 # --- Admin Management Handlers ---
 
 async def handle_admin_management_menu(event, pool, client):
-    """Показывает меню управления администраторами"""
-    if event.sender_id not in ADMIN_USER_IDS:
-        await event.respond('У вас нет прав для выполнения этой команды.')
-        return
     set_user_state(event.sender_id, UserState.ADMIN_MANAGEMENT_MENU)
     await event.respond(get_admin_management_menu_text())
 
 
 async def handle_admin_command(event, pool, client):
-    """Обработчик команд меню управления администраторами"""
-    if event.sender_id not in ADMIN_USER_IDS:
-        await event.respond('У вас нет прав для выполнения этой команды.')
-        return
-
     command = event.text.strip()
 
     if command == '1':  # Список админов
         await handle_list_admins(event, pool)
     elif command == '2':  # Добавить админа
         set_user_state(event.sender_id, UserState.ADDING_ADMIN)
-        await handle_add_admin(event, pool, client)
+        await event.respond(
+            'Введите ID пользователя, которого нужно сделать администратором:')
     elif command == '3':  # Удалить админа
         await handle_remove_admin(event, pool, client)
     elif command == '0':  # Назад
@@ -91,7 +93,6 @@ async def handle_admin_command(event, pool, client):
 
 
 async def handle_list_admins(event, pool):
-    """Показывает список всех администраторов"""
     try:
         admins = await get_admins(pool)
         if not admins:
@@ -108,28 +109,18 @@ async def handle_list_admins(event, pool):
 
 async def handle_add_admin(event, pool, client):
     try:
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message(
-                'Введите ID пользователя, которого нужно сделать администратором:')
-            response = await conv.get_response()
-
-            try:
-                user_id = int(response.text.strip())
-                await add_admin(pool, user_id)
-                await conv.send_message(
-                    f'Пользователь с ID `{user_id}` успешно добавлен в список администраторов.')
-            except ValueError:
-                await conv.send_message('Ошибка: ID должен быть числом.')
-            except Exception as e:
-                logger.error(f'Ошибка при добавлении администратора: {e}')
-                await conv.send_message(
-                    'Произошла ошибка при добавлении администратора.')
-    except asyncio.TimeoutError:
-        await event.respond(
-            'Время ожидания истекло. Пожалуйста, попробуйте снова.')
-    except Exception as e:
-        logger.error(f'Ошибка в handle_add_admin: {e}')
-        await event.respond('Произошла непредвиденная ошибка.')
+        user_id = event.text.strip()
+        try:
+            user_id = int(user_id)
+            await add_admin(pool, user_id)
+            await event.respond(
+                f'Пользователь с ID `{user_id}` успешно добавлен в список администраторов.')
+        except ValueError:
+            await event.respond('Ошибка: ID должен быть числом.')
+        except Exception as e:
+            logger.error(f'Ошибка при добавлении администратора: {e}')
+            await event.respond(
+                'Произошла ошибка при добавлении администратора.')
     finally:
         set_user_state(event.sender_id, UserState.ADMIN_MANAGEMENT_MENU)
 
@@ -143,35 +134,39 @@ async def handle_remove_admin(event, pool, client):
 
         admins_list = '\n'.join(
             [f'{i + 1}. `{admin_id}`' for i, admin_id in enumerate(admins)])
-
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message(
-                'Выберите номер администратора для удаления:\n' +
-                admins_list
-            )
-            response = await conv.get_response()
-
-            try:
-                index = int(response.text.strip()) - 1
-                if 0 <= index < len(admins):
-                    admin_id = admins[index]
-                    if admin_id == event.sender_id:
-                        await conv.send_message(
-                            'Вы не можете удалить сами себя.')
-                        return
-                    await remove_admin(pool, admin_id)
-                    await conv.send_message(
-                        f'Пользователь с ID `{admin_id}` удален из списка администраторов.')
-                else:
-                    await conv.send_message('Неверный номер администратора.')
-            except ValueError:
-                await conv.send_message('Пожалуйста, введите число.')
-    except asyncio.TimeoutError:
         await event.respond(
-            'Время ожидания истекло. Пожалуйста, попробуйте снова.')
+            f'Выберите номер администратора для удаления:\n{admins_list}')
+        set_user_state(event.sender_id, UserState.REMOVING_ADMIN,
+                       {"admins": admins})
     except Exception as e:
         logger.error(f'Ошибка в handle_remove_admin: {e}')
         await event.respond('Произошла ошибка при удалении администратора.')
+
+
+async def handle_remove_admin_confirm(event, pool, client):
+    try:
+        data = get_user_data(event.sender_id)
+        admins = data.get("admins", [])
+
+        try:
+            index = int(event.text.strip()) - 1
+            if 0 <= index < len(admins):
+                admin_id = admins[index]
+                if admin_id == event.sender_id:
+                    await event.respond('Вы не можете удалить сами себя.')
+                    return
+                await remove_admin(pool, admin_id)
+                await event.respond(
+                    f'Пользователь с ID `{admin_id}` удален из списка администраторов.')
+            else:
+                await event.respond('Неверный номер администратора.')
+        except ValueError:
+            await event.respond('Пожалуйста, введите число.')
+    except Exception as e:
+        logger.error(f'Ошибка в handle_remove_admin_confirm: {e}')
+        await event.respond('Произошла ошибка при удалении администратора.')
+    finally:
+        set_user_state(event.sender_id, UserState.ADMIN_MANAGEMENT_MENU)
 
 
 # --- Individual Command Handlers ---
@@ -194,106 +189,145 @@ async def handle_status(event, pool):
 
 
 async def handle_set_theme(event, pool, client):
-    try:
-        set_user_state(event.sender_id, UserState.SETTING_THEME)
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            current_theme = await get_setting(pool,
-                                              'weekly_theme') or 'не установлена'
-            await conv.send_message(
-                f'Текущая тема недели: {current_theme}.\nВведите новую тему:')
-            response = await conv.get_response()
-            new_theme = response.text.strip()
-            if not new_theme:
-                await conv.send_message('Название темы не может быть пустым.')
-                return
-            await set_setting(pool, 'weekly_theme', new_theme)
-            await conv.send_message(f'Тема недели обновлена: "{new_theme}"')
-    except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Попробуйте снова.')
-    except Exception as e:
-        await event.respond(f'Ошибка при установке темы: {e}')
-    finally:
-        set_user_state(event.sender_id, UserState.MAIN_MENU)
+    set_user_state(event.sender_id, UserState.SETTING_THEME)
+    current_theme = await get_setting(pool, 'weekly_theme') or 'не установлена'
+    await event.respond(
+        f'Текущая тема недели: {current_theme}.\nВведите новую тему:')
+
+
+async def handle_set_theme_confirm(event, pool, client):
+    new_theme = event.text.strip()
+    if not new_theme:
+        await event.respond('Название темы не может быть пустым.')
+        return
+
+    await set_setting(pool, 'weekly_theme', new_theme)
+    await event.respond(f'Тема недели обновлена: "{new_theme}"')
+    set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_add_article(event, pool, client):
-    try:
-        set_user_state(event.sender_id, UserState.ADDING_ARTICLE)
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message(
-                'Отправьте URL статьи, которую хотите добавить:')
-            url_message = await conv.get_response()
-            url = url_message.text.strip()
-            await conv.send_message(
-                'Теперь введите теги через запятую (например: ai, ml, longread):')
-            tags_message = await conv.get_response()
-            tags = [tag.strip() for tag in tags_message.text.split(',')]
-            await conv.send_message('Пытаюсь получить данные со страницы...')
-            try:
-                title, content = await parse_single_article_content(url)
-                if not title:
-                    await conv.send_message(
-                        'Не удалось автоматически определить заголовок. Введите его вручную:')
-                    title_message = await conv.get_response()
-                    title = title_message.text.strip()
-            except Exception as e:
-                await conv.send_message(
-                    f'Не удалось получить данные со страницы: {e}. Введите заголовок вручную:')
-                title_message = await conv.get_response()
-                title = title_message.text.strip()
-                content = ''
-            await conv.send_message(
-                f'**Заголовок:** {title}\n**URL:** {url}\n**Теги:** {tags}\n\nСохранить эту статью? (Да/Нет)')
-            confirmation = await conv.get_response()
-            if confirmation.text.lower() in ['да', 'д', 'yes', 'y']:
-                try:
-                    await save_article(pool, title, url, content, 'manual',
-                                       tags, datetime.datetime.utcnow())
-                    await conv.send_message(
-                        'Статья успешно добавлена. Запускаю генерацию эмбеддингов...')
-                    await update_embeddings(pool)
-                    await conv.send_message(
-                        'Эмбеддинги для новой статьи созданы.')
-                except Exception as e:
-                    if 'duplicate key value' in str(e):
-                        await conv.send_message(
-                            'Эта статья уже есть в базе данных.')
-                    else:
-                        await conv.send_message(
-                            f'Ошибка при сохранении статьи: {e}')
+    set_user_state(event.sender_id, UserState.ADDING_ARTICLE, {"step": "url"})
+    await event.respond('Отправьте URL статьи, которую хотите добавить:')
+
+
+async def handle_add_article_step(event, pool, client):
+    data = get_user_data(event.sender_id)
+    step = data.get("step")
+    user_data = get_user_data(event.sender_id)
+
+    if step == "url":
+        url = event.text.strip()
+        set_user_state(
+            event.sender_id,
+            UserState.ADDING_ARTICLE,
+            {"step": "tags", "url": url}
+        )
+        await event.respond(
+            'Теперь введите теги через запятую (например: ai, ml, longread):')
+
+    elif step == "tags":
+        tags = [tag.strip() for tag in event.text.split(',')]
+        url = user_data.get("url")
+
+        set_user_state(
+            event.sender_id,
+            UserState.ADDING_ARTICLE,
+            {"step": "processing", "url": url, "tags": tags}
+        )
+
+        await event.respond('Пытаюсь получить данные со страницы...')
+        try:
+            title, content = await parse_single_article_content(url)
+            if not title:
+                set_user_state(
+                    event.sender_id,
+                    UserState.ADDING_ARTICLE,
+                    {"step": "manual_title", "url": url, "tags": tags}
+                )
+                await event.respond(
+                    'Не удалось автоматически определить заголовок. Введите его вручную:')
             else:
-                await conv.send_message('Добавление статьи отменено.')
-    except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Попробуйте снова.')
-    except Exception as e:
-        await event.respond(f'Произошла ошибка: {e}')
-    finally:
+                set_user_state(
+                    event.sender_id,
+                    UserState.ADDING_ARTICLE,
+                    {"step": "confirm", "url": url, "tags": tags,
+                     "title": title, "content": content}
+                )
+                await event.respond(
+                    f'**Заголовок:** {title}\n**URL:** {url}\n**Теги:** {tags}\n\n'
+                    'Сохранить эту статью? (Да/Нет)'
+                )
+        except Exception as e:
+            set_user_state(
+                event.sender_id,
+                UserState.ADDING_ARTICLE,
+                {"step": "manual_title", "url": url, "tags": tags}
+            )
+            await event.respond(
+                f'Не удалось получить данные со страницы: {e}. Введите заголовок вручную:')
+
+    elif step == "manual_title":
+        title = event.text.strip()
+        url = user_data.get("url")
+        tags = user_data.get("tags")
+
+        set_user_state(
+            event.sender_id,
+            UserState.ADDING_ARTICLE,
+            {"step": "confirm", "url": url, "tags": tags, "title": title,
+             "content": ''}
+        )
+        await event.respond(
+            f'**Заголовок:** {title}\n**URL:** {url}\n**Теги:** {tags}\n\n'
+            'Сохранить эту статью? (Да/Нет)'
+        )
+
+    elif step == "confirm":
+        if event.text.lower() in ['да', 'д', 'yes', 'y']:
+            url = user_data.get("url")
+            title = user_data.get("title")
+            content = user_data.get("content", '')
+            tags = user_data.get("tags")
+
+            try:
+                await save_article(pool, title, url, content, 'manual', tags,
+                                   datetime.datetime.utcnow())
+                await event.respond(
+                    'Статья успешно добавлена. Запускаю генерацию эмбеддингов...')
+                await update_embeddings(pool)
+                await event.respond('Эмбеддинги для новой статьи созданы.')
+            except Exception as e:
+                if 'duplicate key value' in str(e):
+                    await event.respond('Эта статья уже есть в базе данных.')
+                else:
+                    await event.respond(f'Ошибка при сохранении статьи: {e}')
+        else:
+            await event.respond('Добавление статьи отменено.')
+
         set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_search(event, pool, client):
-    try:
-        set_user_state(event.sender_id, UserState.SEARCHING)
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message('Введите ваш поисковый запрос:')
-            response = await conv.get_response()
-            query = response.text
-            await conv.send_message(f'Ищу статьи по запросу: "{query}"...')
-            results = await semantic_search(query, pool)
-            if not results:
-                await conv.send_message('Ничего не найдено.')
-                return
-            response_message = "Вот что удалось найти:\n\n"
-            for i, article in enumerate(results, 1):
-                response_message += f"{i}. {article['title']}\n"
-                response_message += f"   {article['url']}\n\n"
-            await conv.send_message(response_message, link_preview=False)
-    except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Попробуйте снова.')
-    except Exception as e:
-        await event.respond(f'Ошибка во время поиска: {e}')
-    finally:
-        set_user_state(event.sender_id, UserState.MAIN_MENU)
+    set_user_state(event.sender_id, UserState.SEARCHING)
+    await event.respond('Введите ваш поисковый запрос:')
+
+
+async def handle_search_confirm(event, pool, client):
+    query = event.text
+    await event.respond(f'Ищу статьи по запросу: "{query}"...')
+    results = await semantic_search(query, pool)
+
+    if not results:
+        await event.respond('Ничего не найдено.')
+    else:
+        response_message = "Вот что удалось найти:\n\n"
+        for i, article in enumerate(results, 1):
+            response_message += f"{i}. {article['title']}\n"
+            response_message += f"   {article['url']}\n\n"
+        await event.respond(response_message, link_preview=False)
+
+    set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_parsing(event, pool, client):
@@ -315,21 +349,16 @@ async def handle_embeddings(event, pool):
 
 
 async def handle_summary(event, pool, client):
-    try:
-        set_user_state(event.sender_id, UserState.SUMMARY)
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message('Введите тему для еженедельного саммари:')
-            response = await conv.get_response()
-            theme = response.text
-            await conv.send_message(f'Создаю саммари по теме: "{theme}"...')
-            summary = await create_weekly_summary(theme, pool)
-            await conv.send_message(summary)
-    except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Попробуйте снова.')
-    except Exception as e:
-        await event.respond(f'Ошибка во время создания саммари: {e}')
-    finally:
-        set_user_state(event.sender_id, UserState.MAIN_MENU)
+    set_user_state(event.sender_id, UserState.SUMMARY)
+    await event.respond('Введите тему для еженедельного саммари:')
+
+
+async def handle_summary_confirm(event, pool, client):
+    theme = event.text
+    await event.respond(f'Создаю саммари по теме: "{theme}"...')
+    summary = await create_weekly_summary(theme, pool)
+    await event.respond(summary)
+    set_user_state(event.sender_id, UserState.MAIN_MENU)
 
 
 async def handle_db_status(event, pool):
@@ -609,67 +638,64 @@ async def handle_weekly_training(event, pool, client):
 
 async def handle_channels_menu(event, pool, client):
     """Показывает меню управления каналами"""
-    if event.sender_id not in ADMIN_USER_IDS:
-        await event.respond('У вас нет прав для выполнения этой команды.')
-        return
     set_user_state(event.sender_id, UserState.CHANNELS_MENU)
     await event.respond(get_channels_menu_text())
 
 
 async def handle_add_channel(event, pool, client):
+    set_user_state(event.sender_id, UserState.ADDING_CHANNEL)
+    await event.respond(
+        'Введите username канала (например, @channel_name или https://t.me/channel_name):')
+
+
+async def handle_add_channel_confirm(event, pool, client):
+    channel = event.text.strip()
+    if 't.me/' in channel:
+        channel = channel.split('t.me/')[-1].split('/')[0]
+    channel = channel.replace('@', '')
+
     try:
-        if event.sender_id not in ADMIN_USER_IDS:
-            await event.respond('У вас нет прав для выполнения этой команды.')
-            return
-        set_user_state(event.sender_id, UserState.ADDING_CHANNEL)
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message(
-                'Введите username канала (например, @channel_name или https://t.me/channel_name):')
-            response = await conv.get_response()
-            channel = response.text.strip()
-            if 't.me/' in channel:
-                channel = channel.split('t.me/')[-1].split('/')[0]
-            channel = channel.replace('@', '')
-            await add_channel(pool, channel)
-            await conv.send_message(
-                f'Канал @{channel} успешно добавлен в список источников.')
-    except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Попробуйте снова.')
+        await add_channel(pool, channel)
+        await event.respond(
+            f'Канал @{channel} успешно добавлен в список источников.')
     except Exception as e:
         await event.respond(f'Ошибка при добавлении канала: {e}')
-    finally:
-        set_user_state(event.sender_id, UserState.CHANNELS_MENU)
+
+    set_user_state(event.sender_id, UserState.CHANNELS_MENU)
 
 
 async def handle_remove_channel(event, pool, client):
     try:
-        if event.sender_id not in ADMIN_USER_IDS:
-            await event.respond('У вас нет прав для выполнения этой команды.')
-            return
-        set_user_state(event.sender_id, UserState.REMOVING_CHANNEL)
         channels = await get_channels(pool)
         if not channels:
             await event.respond('Список каналов пуст.')
             return
+
         channels_list = '\n'.join(
             [f'{i + 1}. @{channel}' for i, channel in enumerate(channels)])
-        async with client.conversation(event.sender_id, timeout=300) as conv:
-            await conv.send_message(
-                f'Выберите номер канала для удаления:\n{channels_list}')
-            response = await conv.get_response()
-            try:
-                index = int(response.text.strip()) - 1
-                if 0 <= index < len(channels):
-                    channel = channels[index]
-                    await remove_channel(pool, channel)
-                    await conv.send_message(
-                        f'Канал @{channel} успешно удален.')
-                else:
-                    await conv.send_message('Неверный номер канала.')
-            except ValueError:
-                await conv.send_message('Введите число.')
-    except asyncio.TimeoutError:
-        await event.respond('Время ожидания истекло. Попробуйте снова.')
+        await event.respond(
+            f'Выберите номер канала для удаления:\n{channels_list}')
+        set_user_state(event.sender_id, UserState.REMOVING_CHANNEL,
+                       {"channels": channels})
+    except Exception as e:
+        await event.respond(f'Ошибка при удалении канала: {e}')
+
+
+async def handle_remove_channel_confirm(event, pool, client):
+    try:
+        data = get_user_data(event.sender_id)
+        channels = data.get("channels", [])
+
+        try:
+            index = int(event.text.strip()) - 1
+            if 0 <= index < len(channels):
+                channel = channels[index]
+                await remove_channel(pool, channel)
+                await event.respond(f'Канал @{channel} успешно удален.')
+            else:
+                await event.respond('Неверный номер канала.')
+        except ValueError:
+            await event.respond('Введите число.')
     except Exception as e:
         await event.respond(f'Ошибка при удалении канала: {e}')
     finally:
@@ -694,10 +720,6 @@ async def handle_list_channels(event, pool):
 
 async def handle_channel_command(event, pool, client):
     """Обработчик команд меню управления каналами"""
-    if event.sender_id not in ADMIN_USER_IDS:
-        await event.respond('У вас нет прав для выполнения этой команды.')
-        return
-
     command = event.text.strip()
 
     if command == '1':  # Список каналов
@@ -734,7 +756,40 @@ async def register_handlers(client, pool):
         current_state = get_user_state(event.sender_id)
         command = event.text.strip()
 
-        # Обработка состояний
+        # Обработка специальных состояний
+        if current_state == UserState.ADDING_ADMIN:
+            await handle_add_admin(event, pool, client)
+            return
+
+        if current_state == UserState.REMOVING_ADMIN:
+            await handle_remove_admin_confirm(event, pool, client)
+            return
+
+        if current_state == UserState.SETTING_THEME:
+            await handle_set_theme_confirm(event, pool, client)
+            return
+
+        if current_state == UserState.ADDING_ARTICLE:
+            await handle_add_article_step(event, pool, client)
+            return
+
+        if current_state == UserState.SEARCHING:
+            await handle_search_confirm(event, pool, client)
+            return
+
+        if current_state == UserState.SUMMARY:
+            await handle_summary_confirm(event, pool, client)
+            return
+
+        if current_state == UserState.ADDING_CHANNEL:
+            await handle_add_channel_confirm(event, pool, client)
+            return
+
+        if current_state == UserState.REMOVING_CHANNEL:
+            await handle_remove_channel_confirm(event, pool, client)
+            return
+
+        # Обработка меню
         if current_state == UserState.CHANNELS_MENU:
             if command in CHANNEL_COMMANDS_MAP:
                 await handle_channel_command(event, pool, client)
