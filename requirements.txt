@@ -9,5 +9,5 @@ scikit-learn
 torch
 python-dotenv
 pyyaml
-httpx
+httpx[http2]
 pgvector
