@@ -3,13 +3,6 @@ set -e
 
 DUMP_FILE="mydb_dump.sql"
 
-# 1. Клонирование репозитория
-if [ ! -d telegram-news-automation ]; then
-  mkdir telegram-news-automation
-fi
-cp .env telegram-news-automation/.env
-cd telegram-news-automation
-
 # 2. Проверка .env
 if [ ! -f .env ]; then
   echo "⚠️  Нет .env! Создайте .env вручную."
