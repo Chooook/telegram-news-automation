@@ -34,7 +34,7 @@ def load_model():
                 'text-generation',
                 model=model,
                 tokenizer=tokenizer,
-                device=-1,  # Force CPU usage (-1 means CPU)
+                # device=-1,  # Force CPU usage (-1 means CPU)
                 framework='pt',
                 model_kwargs={"torch_dtype": torch.float32}
             )
