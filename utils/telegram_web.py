@@ -73,7 +73,8 @@ async def send_web_message(
     except Exception as e:
         logger.error(f"Error sending message to {chat_id}: {e}")
         await asyncio.sleep(5)
+        result = False
         if not retry:
-            await send_web_message(chat_id, text, parse_mode,
-                                   disable_web_page_preview, True)
-        return False
+            result = await send_web_message(
+                chat_id, text, parse_mode, disable_web_page_preview, True)
+        return result
