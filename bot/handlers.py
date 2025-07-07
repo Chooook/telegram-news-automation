@@ -24,7 +24,8 @@ from database.db_manager import (
     get_admins, add_admin, remove_admin
 )
 from scheduler.jobs import (scheduled_parsing, scheduled_embedding_update,
-    scheduled_post_publication, scheduled_weekly_summary)
+                            scheduled_post_publication,
+                            scheduled_weekly_summary, scheduled_weekly_theme)
 from utils.telegram_web import send_web_message, get_chat_info
 
 logger = logging.getLogger(__name__)
@@ -397,10 +398,12 @@ async def handle_view_logs(event):
 
 async def handle_weekly_training(event, pool, client):
     """
-    Запускает полный сценарий недели:
-    1. Отправляет сообщение с темой недели
-    2. Планирует посты на неделю (1 в пн, 2 вт-чт, 1 пт)
-    3. В конце публикует саммари по опубликованным постам
+    Запускает полный сценарий недели, используя существующие задачи из jobs.py:
+    1. Устанавливает тему недели (scheduled_weekly_theme)
+    2. Выполняет парсинг источников (scheduled_parsing)
+    3. Обновляет эмбеддинги (scheduled_embedding_update)
+    4. Планирует и публикует посты (scheduled_post_publication)
+    5. Публикует саммари (scheduled_weekly_summary)
     """
     try:
         if event.sender_id not in ADMIN_USER_IDS:
@@ -409,231 +412,85 @@ async def handle_weekly_training(event, pool, client):
 
         await event.respond('🚀 Запуск полного недельного сценария...')
 
-        # Get the current weekly theme
-        theme = await get_setting(pool, 'weekly_theme')
-        if not theme:
-            await event.respond(
-                '❌ Ошибка: Не установлена тема недели. Пожалуйста, установите тему с помощью команды /set_theme')
-            return
-
-        target_channel = TELEGRAM_CHANNEL or '@test_chanellmy'
-
-        # 1. Send weekly theme message
-        theme_message = f"📅 *Тема недели*: {theme}\n\n"
-        theme_message += "На этой неделе мы будем обсуждать актуальные новости по этой теме. "
-        theme_message += "Следите за нашими публикациями! 🚀"
-
-        await event.respond('📢 Отправляю сообщение с темой недели...')
-        await send_web_message(
-            chat_id=target_channel,
-            text=theme_message,
-            parse_mode='Markdown'
-        )
-
-        # 2. Update embeddings and get articles
-        await event.respond('🔄 Обновляю эмбеддинги...')
-        await update_embeddings(pool)
-
-        # 3. Find and schedule posts for the week
-        await event.respond('📅 Составляю расписание постов на неделю...')
-
-        # Get theme embedding for finding relevant articles
-        from search.embeddings import generate_embedding
-        from datetime import datetime, timedelta
-
-        theme_embedding = await generate_embedding(theme)
-        if not theme_embedding:
-            await event.respond(
-                '❌ Ошибка: Не удалось сгенерировать эмбеддинг темы')
-            return
-
-        # Ensure theme_embedding is in the correct format (list of floats)
-        if isinstance(theme_embedding, str):
-            # Try to convert from string representation if needed
-            try:
-                import ast
-                theme_embedding = ast.literal_eval(theme_embedding)
-                if not isinstance(theme_embedding, list):
-                    raise ValueError("Embedding is not a list")
-            except (ValueError, SyntaxError) as e:
-                logger.error(f"Failed to parse embedding: {e}")
-                await event.respond('❌ Ошибка: Неверный формат эмбеддинга')
-                return
-
-        # Convert to numpy array with float32 dtype
-        import numpy as np
+        # 1. Установка темы недели
+        await event.respond('🎯 Устанавливаю тему недели...')
         try:
-            embedding_array = np.array(theme_embedding, dtype=np.float32)
-        except (ValueError, TypeError) as e:
-            logger.error(f"Failed to convert embedding to float32: {e}")
-            await event.respond('❌ Ошибка: Не удалось преобразовать эмбеддинг')
-            return
-
-        # Find relevant articles in Russian only
-        query = """
-            SELECT n.*, 1 - (ae.embedding <=> $1) as similarity
-            FROM article_embeddings ae
-            JOIN news n ON ae.article_id = n.link
-            WHERE n.description ~* '[а-яА-ЯёЁ]'  -- Only Russian content
-            ORDER BY similarity DESC
-            LIMIT 8  -- 1(пн) + 2(вт) + 2(ср) + 2(чт) + 1(пт) = 8 постов
-        """
-
-        async with pool.acquire() as conn:
-            # Use the numpy array directly - asyncpg will handle the conversion
-            articles = await conn.fetch(query, embedding_array)
-
-        if not articles or len(articles) < 8:
-            await event.respond(
-                '❌ Ошибка: Недостаточно статей для публикации (нужно минимум 8)')
-            if articles:
-                await event.respond(f'Найдено только {len(articles)} статей')
-            return
-
-        # Save articles to database for scheduled posting
-        scheduled_posts = []
-        article_index = 0
-
-        # Monday - 1 post
-        scheduled_posts.append({
-            'day': 0,  # Monday (0 = Monday in isoweekday)
-            'time': '12:00',
-            'article': articles[article_index]
-        })
-        article_index += 1
-
-        # Tuesday-Thursday - 2 posts per day
-        for day in [1, 2, 3]:  # Tuesday (1) to Thursday (3)
-            scheduled_posts.append({
-                'day': day,
-                'time': '12:00',
-                'article': articles[article_index]
-            })
-            article_index += 1
-
-            scheduled_posts.append({
-                'day': day,
-                'time': '19:00',
-                'article': articles[article_index]
-            })
-            article_index += 1
-
-        # Friday - 1 post
-        scheduled_posts.append({
-            'day': 4,  # Friday
-            'time': '12:00',
-            'article': articles[article_index]
-        })
-
-        # Publish all posts immediately with delays
-        await event.respond('🚀 Публикую все посты...')
-
-        # Get the target channel(s)
-        channels = [target_channel]  # Use the target channel defined earlier
-
-        try:
-            for i, article in enumerate(articles, 1):
-                try:
-                    # Format the post with consistent styling
-                    post = (
-                        f"📌 *{article['title'].strip()}*\n\n"
-                        f"ℹ️ {article['description'].strip()}\n\n"
-                        f"🔗 [Читать статью]({article['link']})\n"
-                        "#новости #аналитика"
-                    )
-
-                    # Send to all channels with error handling and retry
-                    for channel in channels:
-                        try:
-                            await send_web_message(
-                                chat_id=channel,
-                                text=post,
-                                parse_mode='Markdown',
-                                disable_web_page_preview=True
-                            )
-                            # Add delay between posts to same channel (3 seconds)
-                            await asyncio.sleep(3)
-                        except Exception as e:
-                            logger.error(f"Error sending to {channel}: {e}")
-                            continue
-
-                    # Add delay between different posts (5 seconds)
-                    if i < len(articles):
-                        await asyncio.sleep(5)
-
-                except Exception as e:
-                    logger.error(f"Error formatting post {i}: {e}")
-                    continue
-
-            # Create and publish summary immediately with better formatting
-            await event.respond("📊 Готовлю еженедельный дайджест...")
-
-            try:
-                # Create a well-formatted summary
-                summary = (
-                    "🌟 *ЕЖЕНЕДЕЛЬНЫЙ ДАЙДЖЕСТ НОВОСТЕЙ* 🌟\n\n"
-                    f"📌 Тема недели: *{theme}*\n\n"
-                    "📚 *Самые интересные материалы:*\n\n"
-                )
-
-                # Add each article with consistent formatting
-                for i, article in enumerate(articles, 1):
-                    article_text = (
-                        f"{i}. *{article['title'].strip()}*\n"
-                    )
-                    if article.get('description'):
-                        desc = article['description'].strip()
-                        article_text += f"   {desc[:150]}{'...' if len(desc) > 150 else ''}\n"
-                    article_text += f"   🔗 [Читать статью]({article['link']})\n\n"
-
-                    # Add article to summary if it fits (Telegram limit is 4096 chars)
-                    if len(summary + article_text) < 3800:  # Leave some space for footer
-                        summary += article_text
-                    else:
-                        summary += "\n...и другие интересные материалы!"
-                        break
-
-                # Add footer with engagement
-                summary += (
-                    "\n💬 Какая тема была для вас самой интересной? Делитесь в комментариях!\n"
-                    "🔔 Подпишитесь, чтобы не пропустить новые материалы!"
-                )
-
-                # Send summary to all channels with error handling
-                for channel in channels:
-                    try:
-                        await send_web_message(
-                            chat_id=channel,
-                            text=summary,
-                            parse_mode='Markdown',
-                            disable_web_page_preview=True
-                        )
-                        await asyncio.sleep(3)  # Delay between channel sends
-                    except Exception as e:
-                        logger.error(
-                            f"Error sending summary to {channel}: {e}")
-                        continue
-
-                await event.respond(
-                    '✅ Еженедельное саммари успешно опубликовано!')
-
-            except Exception as e:
-                logger.error(f"Error creating summary: {e}")
-                await event.respond(
-                    f'❌ Ошибка при создании дайджеста: {str(e)[:200]}')
-
+            await scheduled_weekly_theme(client, pool)
+            theme = await get_setting(pool, 'weekly_theme')
+            await event.respond(f'✅ Тема недели установлена: {theme}')
         except Exception as e:
-            logger.error(f"Error in weekly training: {e}")
-            await event.respond(f'❌ Ошибка: {str(e)[:200]}')
+            logger.error(f"Error setting weekly theme: {e}", exc_info=True)
+            await event.respond(f'❌ Ошибка установки темы: {str(e)[:200]}')
+            return
 
+        # 2. Парсинг источников
+        await event.respond('🔍 Запускаю парсинг источников...')
+        try:
+            await scheduled_parsing(client, pool)
+            await event.respond('✅ Парсинг завершен успешно')
+        except Exception as e:
+            logger.error(f"Error during parsing: {e}", exc_info=True)
+            await event.respond(f'❌ Ошибка парсинга: {str(e)[:200]}')
+            return
+
+        # 3. Обновление эмбеддингов
+        await event.respond('🔄 Обновляю эмбеддинги...')
+        try:
+            await scheduled_embedding_update(pool)
+            await event.respond('✅ Эмбеддинги обновлены')
+        except Exception as e:
+            logger.error(f"Error updating embeddings: {e}", exc_info=True)
+            await event.respond(
+                f'❌ Ошибка обновления эмбеддингов: {str(e)[:200]}')
+            return
+
+        # 4. Публикация тестовых постов по расписанию
+        await event.respond('📅 Публикую тестовые посты...')
+
+        # Создаем тестовое расписание (пн-пт)
+        test_schedule = [
+            # Понедельник
+            {'day': 0, 'time': '12:00', 'type': 'morning'},
+            # Вторник
+            {'day': 1, 'time': '10:00', 'type': 'morning'},
+            {'day': 1, 'time': '19:00', 'type': 'evening'},
+            # Среда
+            {'day': 2, 'time': '10:00', 'type': 'morning'},
+            {'day': 2, 'time': '19:00', 'type': 'evening'},
+            # Четверг
+            {'day': 3, 'time': '10:00', 'type': 'morning'},
+            {'day': 3, 'time': '19:00', 'type': 'evening'},
+            # Пятница
+            {'day': 4, 'time': '10:00', 'type': 'morning'},
+            {'day': 4, 'time': '20:00', 'type': 'summary'}
+        ]
+
+        for item in test_schedule:
+            try:
+                if item['type'] == 'summary':
+                    await event.respond(f"📊 Публикую еженедельный дайджест...")
+                    await scheduled_weekly_summary(client, pool)
+                else:
+                    time_of_day = item['type']
+                    await event.respond(
+                        f"📌 Публикую {time_of_day} пост для дня {item['day']}...")
+                    await scheduled_post_publication(client, pool, time_of_day)
+
+                await asyncio.sleep(2)  # Небольшая задержка между постами
+            except Exception as e:
+                logger.error(f"Error publishing {item['type']} post: {e}",
+                             exc_info=True)
+                await event.respond(
+                    f'⚠️ Ошибка публикации {item["type"]} поста: {str(e)[:200]}')
+
+        # 5. Финализация
         await event.respond('🎉 Недельный сценарий успешно выполнен!')
+        logger.info("Weekly training scenario completed successfully")
 
     except Exception as e:
-        error_msg = f'❌ Ошибка при выполнении недельного сценария: {str(e)}'
+        error_msg = f'❌ Критическая ошибка в недельном сценарии: {str(e)}'
         logger.error(error_msg, exc_info=True)
         await event.respond(error_msg)
-        await event.respond(
-            f'Ошибка при выполнении еженедельного обучения: {e}')
 
 
 async def handle_channels_menu(event, pool, client):
