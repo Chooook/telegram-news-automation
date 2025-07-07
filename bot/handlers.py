@@ -474,7 +474,10 @@ async def handle_weekly_training(event, pool, client):
                     time_of_day = item['type']
                     await event.respond(
                         f"📌 Публикую {time_of_day} пост для дня {item['day']}...")
-                    await scheduled_post_publication(client, pool, time_of_day)
+                    success = await scheduled_post_publication(
+                        client, pool, time_of_day)
+                    if not success:
+                        raise
 
                 await asyncio.sleep(5)  # Небольшая задержка между постами
             except Exception as e:

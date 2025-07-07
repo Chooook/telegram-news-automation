@@ -505,8 +505,11 @@ async def scheduled_post_publication(client, pool, time_of_day=None):
             # Mark as published
             await add_published_link(pool, article['link'])
             logger.info(f"Scheduler: Published article: {article['title']}")
+            return True
         else:
             logger.error("Scheduler: Failed to publish article")
+            raise RuntimeError("Scheduler: Failed to publish article")
 
     except Exception as e:
         logger.error(f"Scheduler: Error during post publication: {e}", exc_info=True)
+        return False
