@@ -41,18 +41,27 @@ async def main():
         try:
             async with client:
                 scheduler.start()
+                asyncio.create_task(scheduler_monitor(scheduler))
                 print("Bot started with scheduled jobs")
                 await client.run_until_disconnected()
         finally:
             print("Stopping scheduler...")
-            scheduler.shutdown()
+            scheduler.shutdown(wait=False)
     except Exception as e:
-        print("Fatal error in main loop")
+        print(f"Fatal error in main loop {e}")
     finally:
         print("Closing database pool...")
         await pool.close()
         if client and client.is_connected():
             await client.disconnect()
+
+
+async def scheduler_monitor(scheduler):
+    while True:
+        await asyncio.sleep(60)
+        print("Active jobs:")
+        for job in scheduler.get_jobs():
+            print(f"Job {job.id} (next run: {job.next_run_time})")
 
 
 if __name__ == "__main__":
