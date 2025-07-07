@@ -476,12 +476,13 @@ async def handle_weekly_training(event, pool, client):
                         f"📌 Публикую {time_of_day} пост для дня {item['day']}...")
                     await scheduled_post_publication(client, pool, time_of_day)
 
-                await asyncio.sleep(2)  # Небольшая задержка между постами
+                await asyncio.sleep(5)  # Небольшая задержка между постами
             except Exception as e:
                 logger.error(f"Error publishing {item['type']} post: {e}",
                              exc_info=True)
                 await event.respond(
                     f'⚠️ Ошибка публикации {item["type"]} поста: {str(e)[:200]}')
+                await asyncio.sleep(5)  # Небольшая задержка между постами
 
         # 5. Финализация
         await event.respond('🎉 Недельный сценарий успешно выполнен!')
