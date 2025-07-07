@@ -384,9 +384,11 @@ async def add_published_link(pool, link):
 
 async def add_channel(pool, username):
     async with pool.acquire() as conn:
+        # Используем CURRENT_TIMESTAMP явно в запросе
         await conn.execute(
-            "INSERT INTO channels (username) VALUES ($1) ON CONFLICT (username) DO NOTHING",
-            username)
+            "INSERT INTO channels (username, added_at) VALUES ($1, CURRENT_TIMESTAMP) ON CONFLICT (username) DO NOTHING",
+            username
+        )
         logger.info(f"Channel added: {username}")
 
 
