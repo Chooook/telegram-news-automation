@@ -11,3 +11,4 @@ python-dotenv
 pyyaml
 httpx[http2]
 pgvector
+accelerate
